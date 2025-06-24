@@ -18,6 +18,7 @@ import dev.langchain4j.model.output.Response;
 import dev.langchain4j.service.AiServices;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.io.FileInputStream;
@@ -43,6 +44,9 @@ public class AIService {
 
     @Value("${gemini.api.model}")
     private String geminiApiModel;
+
+    @Value("${gemini.api.embedding.model}")
+    private String geminiApiEmbeddingModel;
 
     private final WebClient webClient;
 
@@ -257,41 +261,37 @@ public class AIService {
         return response;
     }
 
-    public String workWithFiles(){
+    public String workWithFiles(String type,String url,String prompt){
 
         Base64.Encoder b64encoder = Base64.getEncoder();
 
-        //Load the text from url
-        String base64Text = b64encoder.encodeToString(readBytes(
-                "https://github.com/langchain4j/langchain4j/blob/main/README.md"));
-
-        //Load the image
-        String base64Img = b64encoder.encodeToString(readBytes(
-                "https://avatars.githubusercontent.com/u/132277850?v=4"));
-
-        //if the file is available locally
-        String base64PdfLocally = b64encoder.encodeToString(readBytes(
-                "C:/Users/KIIT/SpringBootProjects/gemini_chat/src/main/java/com/example/gemini_chat/documents/resume.pdf"));
+        String base64Encoded = b64encoder.encodeToString(readBytes(url));
 
         ChatLanguageModel gemini = GoogleAiGeminiChatModel.builder()
                 .apiKey(geminiApiKey)
                 .modelName(geminiApiModel)
                 .build();
 
-        Response<AiMessage> response = gemini.generate(
-                UserMessage.from(
-                        TextFileContent.from(base64Text, "text/x-markdown"),
-                        ImageContent.from(base64Img, "image/png"),
-                        PdfFileContent.from(base64PdfLocally, "application/pdf"),
-                        TextContent.from("""
-                        What is this PDF about in short
-                        """)
-                )
-        );
+        Response<AiMessage> response = switch (type.toLowerCase()) {
+            case "text" -> gemini.generate(
+                        UserMessage.from(
+                                TextFileContent.from(base64Encoded,"text/x-markdown"),
+                                TextContent.from(prompt)
+                        )
+                );
+            case "image" -> gemini.generate(
+                    UserMessage.from(
+                            ImageContent.from(base64Encoded, "image/png"),
+                            TextContent.from(prompt)
+                    )
+            );
+            default -> throw new IllegalStateException("Unexpected value: " + type.toLowerCase());
+        };
 
         System.out.println("Gemini> " + response);
         return response.content().text();
     }
+
 
     private byte[] readBytes(String pathOrUrl) {
         try {
@@ -309,4 +309,40 @@ public class AIService {
         }
     }
 
+    public String getOutputByDocumentUploads(String type, MultipartFile file,String text, String prompt) throws IOException {
+        byte[] fileBytes = file.getBytes();
+        String base64Encoded = Base64.getEncoder().encodeToString(fileBytes);
+
+        ChatLanguageModel gemini = GoogleAiGeminiChatModel.builder()
+                .apiKey(geminiApiKey)
+                .modelName(geminiApiModel)
+                .logRequestsAndResponses(true)
+                .build();
+
+        Response<AiMessage> response = switch (type.toLowerCase()) {
+            case "text" -> {
+                String inputText = "This is the text " + text + prompt;
+                yield gemini.generate(
+                    UserMessage.from(
+                            inputText
+                    )
+                );
+            }
+            case "image" -> gemini.generate(
+                    UserMessage.from(
+                            ImageContent.from(base64Encoded, "image/png"),
+                            TextContent.from(prompt)
+                    )
+            );
+            case "pdf" -> gemini.generate(
+                    UserMessage.from(
+                            PdfFileContent.from(base64Encoded, "application/pdf"),
+                            TextContent.from(prompt)
+                    )
+            );
+            default -> throw new IllegalStateException("Unexpected value: " + type.toLowerCase());
+        };
+
+        return response.content().text();
+    }
 }

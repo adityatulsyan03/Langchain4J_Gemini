@@ -3,8 +3,11 @@ package com.example.gemini_chat;
 import com.example.gemini_chat.weather_forecast.WeatherForecast;
 import com.example.gemini_chat.weather_forecast_tool.WeatherForecastModel;
 import lombok.AllArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+import java.io.IOException;
 import java.util.Map;
 
 @RestController
@@ -18,13 +21,11 @@ public class AIController {
     public ResponseEntity<String> askQuestion(
             @RequestBody Map<String,String> payload
     ){
-
         String question = payload.get("question");
 
         String answer = qnAService.getAnswer(question);
 
         return ResponseEntity.ok(answer);
-
     }
 
     @GetMapping("/1")
@@ -67,8 +68,22 @@ public class AIController {
         return ResponseEntity.ok(qnAService.getOutputUsingTool());
     }
 
-    @GetMapping("/9")
-    public ResponseEntity<String> workWithFiles(){
-        return ResponseEntity.ok(qnAService.workWithFiles());
+    @PostMapping("/9")
+    public ResponseEntity<String> workWithFiles(
+            @RequestParam("type") String type,
+            @RequestParam("url") String url,
+            @RequestParam("prompt") String prompt
+    ){
+        return ResponseEntity.ok(qnAService.workWithFiles(type,url,prompt));
+    }
+
+    @PostMapping(value = "/10", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<String> getOutputByDocumentUploads(
+            @RequestParam("type") String type,
+            @RequestParam("file") MultipartFile file,
+            @RequestParam("text") String text,
+            @RequestParam("prompt") String prompt
+    ) throws IOException {
+        return ResponseEntity.ok(qnAService.getOutputByDocumentUploads(type,file,text,prompt));
     }
 }
