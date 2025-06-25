@@ -38,6 +38,10 @@ dependencies {
 	implementation("dev.langchain4j:langchain4j-core:0.34.0")
 	// https://mvnrepository.com/artifact/dev.langchain4j/langchain4j
 	implementation("dev.langchain4j:langchain4j:0.34.0")
+
+	implementation("org.apache.poi:poi-ooxml:5.2.5")
+	implementation("org.apache.commons:commons-collections4:4.4") // Optional but recommended
+
 }
 
 tasks.withType<Test> {

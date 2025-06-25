@@ -16,6 +16,17 @@ import dev.langchain4j.model.chat.response.ChatResponse;
 import dev.langchain4j.model.googleai.GoogleAiGeminiChatModel;
 import dev.langchain4j.model.output.Response;
 import dev.langchain4j.service.AiServices;
+import lombok.extern.slf4j.Slf4j;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.xslf.usermodel.XMLSlideShow;
+import org.apache.poi.xslf.usermodel.XSLFShape;
+import org.apache.poi.xslf.usermodel.XSLFSlide;
+import org.apache.poi.xslf.usermodel.XSLFTextShape;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
+import org.apache.poi.xwpf.usermodel.*;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -25,6 +36,7 @@ import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
@@ -33,6 +45,7 @@ import static dev.langchain4j.model.chat.request.json.JsonIntegerSchema.JSON_INT
 import static dev.langchain4j.model.chat.request.json.JsonStringSchema.JSON_STRING_SCHEMA;
 import static dev.langchain4j.service.output.JsonSchemas.jsonSchemaFrom;
 
+@Slf4j
 @Service
 public class AIService {
     
@@ -328,9 +341,15 @@ public class AIService {
                     )
                 );
             }
-            case "image" -> gemini.generate(
+            case "png" -> gemini.generate(
                     UserMessage.from(
                             ImageContent.from(base64Encoded, "image/png"),
+                            TextContent.from(prompt)
+                    )
+            );
+            case "jpeg" -> gemini.generate(
+                    UserMessage.from(
+                            ImageContent.from(base64Encoded, "image/jpeg"),
                             TextContent.from(prompt)
                     )
             );
@@ -340,6 +359,116 @@ public class AIService {
                             TextContent.from(prompt)
                     )
             );
+            case "docx", "word" -> {
+                try (InputStream inputStream = file.getInputStream();
+                     XWPFDocument doc = new XWPFDocument(inputStream);
+                     XWPFWordExtractor extractor = new XWPFWordExtractor(doc)) {
+
+                    //Extract plain text
+                    String extractedText = extractor.getText();
+
+                    //Extract tables
+                    StringBuilder tableTextBuilder = new StringBuilder();
+                    List<XWPFTable> tables = doc.getTables();
+
+                    for (int tIndex = 0; tIndex < tables.size(); tIndex++) {
+                        XWPFTable table = tables.get(tIndex);
+                        tableTextBuilder.append("Table ").append(tIndex + 1).append(":\n");
+
+                        for (XWPFTableRow row : table.getRows()) {
+                            for (XWPFTableCell cell : row.getTableCells()) {
+                                tableTextBuilder.append(cell.getText()).append("\t");
+                            }
+                            tableTextBuilder.append("\n");
+                        }
+                        tableTextBuilder.append("\n");
+                    }
+
+                    //Combine text, tables, and prompt
+                    String fullText = extractedText + "\n\n" + tableTextBuilder + "\n\n" + prompt;
+
+                    log.info("Extracted Text: {}", extractedText);
+                    log.info("Extracted Tables: {}", tableTextBuilder);
+                    log.info("Final Input Text: {}", fullText);
+
+                    //Create content list with text + images
+                    List<Content> contentList = new ArrayList<>();
+                    contentList.add(TextContent.from(fullText));
+
+                    List<XWPFPictureData> pictures = doc.getAllPictures();
+                    for (XWPFPictureData picture : pictures) {
+                        byte[] imageBytes = picture.getData();
+
+                        // Guess MIME type from extension
+                        String extension = picture.suggestFileExtension();
+                        String mimeType = switch (extension.toLowerCase()) {
+                            case "png" -> "image/png";
+                            case "jpg", "jpeg" -> "image/jpeg";
+                            case "gif" -> "image/gif";
+                            default -> "application/octet-stream";
+                        };
+
+                        String base64Image = Base64.getEncoder().encodeToString(imageBytes);
+
+                        contentList.add(ImageContent.from(base64Image, mimeType));
+                        log.info("Embedded image added: {} ({} bytes)", extension, imageBytes.length);
+                    }
+
+                    yield gemini.generate(
+                            UserMessage.from(contentList)
+                    );
+                }
+            }
+            case "xlsx", "excel" -> {
+                try (InputStream inputStream = file.getInputStream();
+                     XSSFWorkbook workbook = new XSSFWorkbook(inputStream)) {
+
+                    StringBuilder sb = new StringBuilder();
+                    for (Sheet sheet : workbook) {
+                        sb.append("Sheet: ").append(sheet.getSheetName()).append("\n");
+                        for (Row row : sheet) {
+                            for (Cell cell : row) {
+                                sb.append(cell.toString()).append(" ");
+                            }
+                            sb.append("\n");
+                        }
+                        sb.append("\n");
+                    }
+                    String inputText = sb + "\n\n" + prompt;
+
+                    log.info("Extracted Excel Text: {}", sb);
+
+                    yield gemini.generate(
+                            UserMessage.from(
+                                    TextContent.from(inputText)
+                            )
+                    );
+                }
+            }
+            case "pptx", "ppt" -> {
+                try (InputStream inputStream = file.getInputStream();
+                     XMLSlideShow ppt = new XMLSlideShow(inputStream)) {
+
+                    StringBuilder sb = new StringBuilder();
+                    for (XSLFSlide slide : ppt.getSlides()) {
+                        for (XSLFShape shape : slide.getShapes()) {
+                            if (shape instanceof XSLFTextShape textShape) {
+                                sb.append(textShape.getText()).append("\n");
+                            }
+                        }
+                        sb.append("\n");
+                    }
+                    String inputText = sb + "\n\n" + prompt;
+
+                    log.info("Extracted PowerPoint Text: {}", sb);
+
+                    yield gemini.generate(
+                            UserMessage.from(
+                                    TextContent.from(inputText)
+                            )
+                    );
+                }
+            }
             default -> throw new IllegalStateException("Unexpected value: " + type.toLowerCase());
         };
 
